@@ -6,10 +6,10 @@
 		"0000": {
 			"ProductVersion": "0.1.0",
 			"CompanyName": "rokuroo171",
-			"FileDescription": "Turn screen captures into polished showcase assets.",
-			"LegalCopyright": "© 2026 rokuroo171",
+			"FileDescription": "Capture, annotate, and export polished showcase assets",
+			"LegalCopyright": "(c) 2026, rokuroo171",
 			"ProductName": "Capiro",
-			"Comments": "This is a comment"
+			"Comments": "Capiro"
 		}
 	}
 }

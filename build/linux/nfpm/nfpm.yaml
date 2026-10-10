@@ -10,10 +10,10 @@ version: "0.1.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "Turn screen captures into polished showcase assets."
+description: "Capture, annotate, and export polished showcase assets"
 vendor: "rokuroo171"
-homepage: "https://wails.io"
-license: "MIT"
+homepage: "https://github.com/rokuroo171/capiro"
+license: "GPL-3.0"
 release: "1"
 
 contents:
