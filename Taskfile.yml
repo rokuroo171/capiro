@@ -27,6 +27,18 @@ tasks:
     cmds:
       - task: "{{.GOOS}}:package"
 
+  build:installer:
+    summary: Builds the Windows custom UI installer (CapiroSetup.exe)
+    desc: |
+      Compiles the WPF installer in installer/ and embeds bin/capiro.exe plus
+      the uninstaller, producing bin/CapiroSetup.exe. Windows only: it uses
+      csc from the .NET Framework. Run `wails3 task build` first.
+    preconditions:
+      - sh: test -f bin/capiro.exe
+        msg: "bin/capiro.exe not found. Run wails3 task build first."
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File installer/build-installer.ps1
+
   run:
     summary: Runs the application
     cmds:
