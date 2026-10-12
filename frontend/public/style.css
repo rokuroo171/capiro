@@ -531,6 +531,18 @@ body.is-empty .list-empty,
   border-radius: var(--r-md);
   box-shadow: var(--shadow-shot);
 }
+/* real captures bring their own aspect ratio; the polish state drives the frame */
+.shot.has-image {
+  aspect-ratio: auto;
+  background: var(--shot-bg, var(--surface));
+  border: none;
+  border-radius: var(--shot-radius, var(--r-md));
+  box-shadow: none;
+  padding: var(--shot-pad, 0px);
+  overflow: hidden;
+  transition: background var(--dur-2) var(--ease), padding var(--dur-2) var(--ease);
+}
+.shot-img { display: block; width: 100%; height: auto; border-radius: var(--shot-radius, 0px); }
 .shot-bar {
   display: flex;
   align-items: center;
@@ -740,6 +752,7 @@ body.is-empty .tbar-doc { display: none; }
   color: var(--text-3);
 }
 .status-msg { color: var(--text-2); }
+.status-msg.is-error { color: var(--danger); }
 .status-meta { display: flex; gap: var(--sp-4); }
 
 .inspector {

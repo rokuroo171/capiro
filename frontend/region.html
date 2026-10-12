@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Capiro Region Capture</title>
+    <style>
+      :root {
+        --accent: #f2b33d;
+        --text: #eceef3;
+        --bg-deep: #0b0c10;
+        --surface: #16171d;
+        --line: #2a2d38;
+        --danger: #e6696a;
+      }
+      html, body, #root { height: 100%; margin: 0; }
+      body {
+        background: var(--bg-deep);
+        cursor: crosshair;
+        overflow: hidden;
+        user-select: none;
+        font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .ov { position: fixed; inset: 0; }
+      .ov-shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+      .ov-sel {
+        position: absolute;
+        border: 2px solid var(--accent);
+        box-shadow: 0 0 0 9999px rgba(8, 9, 13, 0.55);
+      }
+      .ov-chip {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 8px 14px;
+        white-space: nowrap;
+      }
+      .ov-hint { bottom: 24px; }
+      .ov-error { top: 24px; color: var(--danger); border-color: var(--danger); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/region-main.tsx"></script>
+  </body>
+</html>

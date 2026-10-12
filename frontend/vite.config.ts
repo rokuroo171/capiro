@@ -10,4 +10,12 @@ export default defineConfig({
     strictPort: true,
   },
   plugins: [react(), wails("./bindings")],
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        region: "region.html",
+      },
+    },
+  },
 });
