@@ -543,6 +543,12 @@ body.is-empty .list-empty,
   transition: background var(--dur-2) var(--ease), padding var(--dur-2) var(--ease);
 }
 .shot-img { display: block; width: 100%; height: auto; border-radius: var(--shot-radius, 0px); }
+.anno-wrap { position: absolute; inset: var(--shot-pad, 0px); overflow: hidden; border-radius: var(--shot-radius, 0px); }
+.anno-overlay { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.tool-color { width: 18px; height: 18px; border-radius: 50%; padding: 0; border: 2px solid var(--line-hi); }
+.tool-color.is-active { border-color: var(--text); }
+.tool-width.is-active { color: var(--accent); background: var(--accent-soft); }
+.anno-style { gap: 4px; }
 .shot-bar {
   display: flex;
   align-items: center;

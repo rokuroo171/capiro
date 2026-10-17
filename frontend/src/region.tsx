@@ -78,7 +78,7 @@ function RegionOverlay() {
       w: Math.abs(e.clientX - s.x),
       h: Math.abs(e.clientY - s.y),
     };
-    // A click without a real drag means cancel, like clicking outside the region
+    // A click without a real drag cancels the overlay, like clicking outside the region
     if (rect.w < 4 || rect.h < 4 || !shot || !imgRef.current) {
       CaptureService.CloseRegionOverlay();
       return;
@@ -113,7 +113,7 @@ function RegionOverlay() {
         />
       )}
       {sel && <div className="ov-sel" style={{ left: sel.left, top: sel.top, width: sel.width, height: sel.height }} />}
-      {!error && <div className="ov-chip ov-hint">Drag to select a region, Escape cancels</div>}
+      {!error && <div className="ov-chip ov-hint">Drag to select a region</div>}
       {error && <div className="ov-chip ov-error">{error}</div>}
     </div>
   );

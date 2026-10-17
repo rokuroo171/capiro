@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Events } from "@wailsio/runtime";
-import { CaptureService } from "../bindings/github.com/rokuroo171/capiro";
-import type { CaptureResult, WindowInfo } from "../bindings/github.com/rokuroo171/capiro";
-import { ExportService } from "../bindings/github.com/rokuroo171/capiro";
+import { CaptureService, ExportService } from "../bindings/github.com/rokuroo171/capiro";
+import type { Annotation, CaptureResult, ScreenInfo, WindowInfo } from "../bindings/github.com/rokuroo171/capiro";
+import AnnotationOverlay from "./AnnotationOverlay";
+import {
+  ANNO_COLORS,
+  ANNO_WIDTHS,
+  reorderAnnotations,
+  type AnnoToolKey,
+} from "./annotations";
 
 const ZOOM_STEPS = [50, 75, 100, 125, 150];
 const FILE_STEM = (result: CaptureResult) =>
@@ -18,27 +24,32 @@ const MODES = [
   { key: "w", label: "Window", kbd: "W", svg: '<rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M2.5 6.5 H13.5"/>' },
   { key: "f", label: "Full screen", kbd: "F", svg: '<rect x="2.5" y="3" width="11" height="8" rx="1.5"/><path d="M8 11 V13.5 M5.5 13.5 H10.5"/>' },
 ];
-const TOOLS = [
+const DRAW_TOOLS: { key: AnnoToolKey; label: string; svg: string }[] = [
   { key: "select", label: "Select", svg: '<path d="M3.5 2.5 L12.5 7.5 L8.5 8.5 L6.5 12.5 Z"/>' },
   { key: "arrow", label: "Arrow", svg: '<path d="M3 13 L12.5 3.5 M12.5 3.5 H7.5 M12.5 3.5 V8.5"/>' },
-  { key: "highlight", label: "Highlight", svg: '<path d="M4 12.5 H12 M6.5 9.5 L10 3.5 L12.5 5.5 L9 11.5 Z"/>' },
-  { key: "text", label: "Text", svg: '<path d="M3.5 4.5 V3 H12.5 V4.5 M8 3 V13 M5.5 13 H10.5"/>' },
   { key: "rect", label: "Rectangle", svg: '<rect x="2.5" y="4" width="11" height="8" rx="1.5"/>' },
   { key: "ellipse", label: "Ellipse", svg: '<ellipse cx="8" cy="8" rx="5.5" ry="4"/>' },
   { key: "pen", label: "Pen", svg: '<path d="M3 13 C5 12 6 10 7 8 C8 6 10 4 13 3"/>' },
-  { key: "blur", label: "Blur", svg: '<rect x="3" y="3" width="10" height="10" rx="1.5" strokeDasharray="2.5 2"/><path d="M6 7.5 v.01 M10 8.5 v.01 M8 11 v.01"/>' },
 ];
+
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+interface HistoryState {
+  past: Annotation[][];
+  present: Annotation[];
+  future: Annotation[][];
+}
+
 function App() {
   const [capture, setCapture] = useState<CaptureResult | null>(null);
+  const [screenList, setScreenList] = useState<ScreenInfo[]>([]);
+  const [screensLoaded, setScreensLoaded] = useState<boolean>(false);
   const [statusMsg, setStatusMsg] = useState<string>("Ready");
   const [statusError, setStatusError] = useState<boolean>(false);
   const [zoom, setZoom] = useState<number>(100);
-  const [modeKey, setModeKey] = useState<string>("r");
-  const [toolKey, setToolKey] = useState<string>("select");
+  const [modeKey] = useState<string>("r");
   const [scaleKey, setScaleKey] = useState<string>("2x");
   const [bgKey, setBgKey] = useState<string>("ink");
   const [padding, setPadding] = useState<number>(24);
@@ -52,8 +63,18 @@ function App() {
   const [exporting, setExporting] = useState<boolean>(false);
   const [recents, setRecents] = useState<{ name: string; meta: string; data: string }[]>([]);
 
+  const [history, setHistory] = useState<HistoryState>({ past: [], present: [], future: [] });
+  const [tool, setTool] = useState<AnnoToolKey>("select");
+  const [annoColor, setAnnoColor] = useState<string>(ANNO_COLORS[0].key);
+  const [annoWidth, setAnnoWidth] = useState<number>(ANNO_WIDTHS[0]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const annotations = history.present;
+
   const windowDialogRef = useRef<HTMLDialogElement | null>(null);
   const exportDialogRef = useRef<HTMLDialogElement | null>(null);
+  const shotImgRef = useRef<HTMLImageElement | null>(null);
+  const [imgSize, setImgSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
   const say = (text: string, isError = false) => {
     setStatusMsg(text);
@@ -68,11 +89,12 @@ function App() {
     setCapture(result);
     setSaved(null);
     setFileName(FILE_STEM(result));
+    setHistory({ past: [], present: [], future: [] });
+    setSelectedId(null);
     say(`${label} capture ready, ${result.width} x ${result.height}`);
   }, []);
 
   const startScreen = useCallback(async () => {
-    setModeKey("f");
     try {
       const result = await CaptureService.CaptureScreen(-1);
       if (result) applyCapture(result, "Screen");
@@ -81,8 +103,22 @@ function App() {
     }
   }, [applyCapture]);
 
+  useEffect(() => {
+    let cancelled = false;
+    CaptureService.Screens()
+      .then((list) => {
+        if (!cancelled) {
+          setScreenList(list ?? []);
+          setScreensLoaded(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setScreensLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const startRegion = useCallback(async () => {
-    setModeKey("r");
     try {
       await CaptureService.StartRegionCapture(-1);
       say("Drag a region on screen, Escape cancels");
@@ -92,7 +128,6 @@ function App() {
   }, []);
 
   const openWindowPicker = useCallback(async () => {
-    setModeKey("w");
     try {
       const list = await CaptureService.ListWindows();
       setWindows(list ?? []);
@@ -128,6 +163,13 @@ function App() {
     document.body.classList.toggle("is-empty", capture === null);
   }, [capture]);
 
+  const hasScreens = !!(screensLoaded && screenList.length > 0);
+  const noScreensDetected = screensLoaded && screenList.length === 0;
+
+  useEffect(() => {
+    document.body.classList.toggle("has-screens", hasScreens);
+  }, [hasScreens]);
+
   const doExport = useCallback(async () => {
     if (!capture?.data) return;
     setExporting(true);
@@ -141,6 +183,7 @@ function App() {
         quality,
         scale: Number(scaleKey.replace("x", "")) || 1,
         fileName,
+        annotate: annotations,
       });
       if (!path) {
         say("Export cancelled");
@@ -158,7 +201,7 @@ function App() {
     } finally {
       setExporting(false);
     }
-  }, [capture, bgKey, padding, radius, format, quality, scaleKey, fileName]);
+  }, [capture, bgKey, padding, radius, format, quality, scaleKey, fileName, annotations]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -169,10 +212,32 @@ function App() {
       if (k === "r") startRegion();
       else if (k === "w") openWindowPicker();
       else if (k === "f") startScreen();
+      else if (k === "delete" || k === "backspace") {
+        if (selectedId) {
+          setHistory((h) => ({
+            past: [...h.past, h.present],
+            present: h.present.filter((a) => a.id !== selectedId),
+            future: [],
+          }));
+          setSelectedId(null);
+        }
+      } else if (k === "z") {
+        setHistory((h) => {
+          if (!h.past.length) return h;
+          const prev = h.past[h.past.length - 1];
+          return { past: h.past.slice(0, -1), present: prev, future: [h.present, ...h.future] };
+        });
+      } else if (k === "y") {
+        setHistory((h) => {
+          if (!h.future.length) return h;
+          const next = h.future[0];
+          return { past: [...h.past, h.present], present: next, future: h.future.slice(1) };
+        });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [startRegion, openWindowPicker, startScreen]);
+  }, [startRegion, openWindowPicker, startScreen, selectedId]);
 
   const setDrawer = (open: boolean) => {
     setDrawerOpen(open);
@@ -185,6 +250,60 @@ function App() {
   };
 
   const zoomLabel = `${zoom}%`;
+
+  const commitAnnotation = (a: Annotation) => {
+    setHistory((h) => ({ past: [...h.past, h.present], present: reorderAnnotations([...h.present, a]), future: [] }));
+    setSelectedId(a.id);
+  };
+
+  // Live gestures replace rather than push: one move counts as one history entry
+  const [liveAnno, setLiveAnno] = useState<Annotation | null>(null);
+  const gestureBase = useRef<Annotation[] | null>(null);
+
+  const pickId = (a: Annotation) => a.id;
+
+  const changeLive = (a: Annotation | null) => {
+    if (!gestureBase.current) gestureBase.current = annotations;
+    setLiveAnno(a);
+  };
+
+  const commitGesture = () => {
+    const base = gestureBase.current ?? annotations;
+    gestureBase.current = null;
+    if (liveAnno) {
+      const merged = reorderAnnotations(
+        base.some((a) => pickId(a) === pickId(liveAnno))
+          ? base.map((a) => (pickId(a) === pickId(liveAnno) ? liveAnno : a))
+          : [...base, liveAnno],
+      );
+      setHistory((h) => ({ past: [...h.past, base], present: merged, future: [] }));
+      setSelectedId(pickId(liveAnno));
+      setLiveAnno(null);
+    } else {
+      setHistory((h) => ({ past: [...h.past, base], present: base, future: [] }));
+    }
+  };
+
+  const displayed = liveAnno
+    ? annotations.some((a) => pickId(a) === pickId(liveAnno))
+      ? annotations.map((a) => (pickId(a) === pickId(liveAnno) ? liveAnno : a))
+      : [...annotations, liveAnno]
+    : annotations;
+
+  const undo = () => {
+    setHistory((h) => {
+      if (!h.past.length) return h;
+      const prev = h.past[h.past.length - 1];
+      return { past: h.past.slice(0, -1), present: prev, future: [h.present, ...h.future] };
+    });
+  };
+  const redo = () => {
+    setHistory((h) => {
+      if (!h.future.length) return h;
+      const next = h.future[0];
+      return { past: [...h.past, h.present], present: next, future: h.future.slice(1) };
+    });
+  };
 
   return (
     <>
@@ -235,12 +354,22 @@ function App() {
         <nav id="rail" className="rail" aria-label="Capture library">
           <section aria-labelledby="capture-h">
             <h2 className="rail-title" id="capture-h">Capture</h2>
-            <div className="modes" role="group" aria-label="Capture mode">
+            {hasScreens ? (
+              <p className="rail-meta" id="screens-meta">{screenList.length} screen{screenList.length === 1 ? "" : "s"} detected</p>
+            ) : noScreensDetected ? (
+              <p className="rail-meta" id="screens-meta">No screens detected</p>
+            ) : null}
+            {noScreensDetected ? (
+              <p className="modes-note" id="modes-note">No screens detected for capture</p>
+            ) : null}
+            <div className="modes" role="group" aria-label="Capture mode" aria-describedby={noScreensDetected ? "modes-note" : undefined}>
               {MODES.map(({ key, label, kbd, svg }) => (
-                <button                  key={key}
+                <button
+                  key={key}
                   className="mode"
                   type="button"
                   aria-pressed={modeKey === key}
+                  aria-disabled={modeKey !== key && noScreensDetected ? true : undefined}
                   onClick={() => {
                     if (key === "r") startRegion();
                     else if (key === "w") openWindowPicker();
@@ -270,6 +399,7 @@ function App() {
                       setCapture({ ...capture, data: r.data });
                       setFileName(r.name);
                       setSaved(null);
+                      setHistory({ past: [], present: [], future: [] });
                       say(`Editing ${r.name}`);
                     }}
                   >
@@ -283,7 +413,7 @@ function App() {
                   </button>
                 </li>
               ))}
-              <li className="list-empty">No recent captures<p>Your captures land here after the first shot</p></li>
+              <li className="list-empty">No recent captures<p>Exports land here</p></li>
             </ul>
           </section>
         </nav>
@@ -291,15 +421,18 @@ function App() {
         <main className="stage" id="stage">
           <div className="tools" role="toolbar" aria-label="Markup tools">
             <div className="tool-group">
-              {TOOLS.map(({ key, label, svg }) => (
+              {DRAW_TOOLS.map(({ key, label, svg }) => (
                 <button
                   key={key}
                   className="tool"
                   type="button"
-                  aria-pressed={toolKey === key}
+                  aria-pressed={tool === key}
                   title={label}
                   aria-label={label}
-                  onClick={() => setToolKey(key)}
+                  onClick={() => {
+                    setTool(key);
+                    if (key !== "select") setSelectedId(null);
+                  }}
                 >
                   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
                     {svg}
@@ -311,26 +444,47 @@ function App() {
             <span className="tool-div" aria-hidden="true"></span>
 
             <div className="tool-group">
-              <button
-                className="tool"
-                type="button"
-                aria-label="Undo"
-                onClick={() => say("Nothing to undo yet")}
-              >
+              <button className="tool" type="button" aria-label="Undo" onClick={undo}>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M6 4 L3 7 L6 10 M3 7 H9 a3.5 3.5 0 1 1 0 7 H7"/>
                 </svg>
               </button>
-              <button
-                className="tool"
-                type="button"
-                aria-label="Redo"
-                onClick={() => say("Nothing to redo yet")}
-              >
+              <button className="tool" type="button" aria-label="Redo" onClick={redo}>
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M10 4 L13 7 L10 10 M13 7 H7 a3.5 3.5 0 1 0 0 7 H9"/>
                 </svg>
               </button>
+            </div>
+
+            <span className="tool-div" aria-hidden="true"></span>
+
+            <div className="tool-group anno-style" aria-label="Annotation style">
+              {ANNO_COLORS.map((c) => (
+                <button
+                  key={c.key}
+                  className={`swatch tool-color ${c.key === annoColor ? "is-active" : ""}`}
+                  type="button"
+                  style={{ background: c.key }}
+                  aria-label={`${c.label} annotation color`}
+                  aria-pressed={c.key === annoColor}
+                  onClick={() => setAnnoColor(c.key)}
+                ></button>
+              ))}
+              <span className="tool-div" aria-hidden="true"></span>
+              {ANNO_WIDTHS.map((w) => (
+                <button
+                  key={w}
+                  className={`tool tool-width ${w === annoWidth ? "is-active" : ""}`}
+                  type="button"
+                  aria-label={`${w} pixel stroke width`}
+                  aria-pressed={w === annoWidth}
+                  onClick={() => setAnnoWidth(w)}
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth={w / 2}>
+                    <path d="M3 8 H13"/>
+                  </svg>
+                </button>
+              ))}
             </div>
 
             <span className="tool-div" aria-hidden="true"></span>
@@ -368,10 +522,31 @@ function App() {
                   {capture && (
                     <>
                       <img
+                        ref={shotImgRef}
                         className="shot-img"
                         src={`data:image/png;base64,${capture.data}`}
                         alt="Current capture"
+                        onLoad={() => {
+                          setImgSize({ w: capture.width, h: capture.height });
+                        }}
                       />
+                      {imgSize.w > 0 && (
+                        <div className="anno-wrap">
+                          <AnnotationOverlay
+                            annotations={displayed}
+                            tool={tool}
+                            color={annoColor}
+                            strokeWidth={annoWidth}
+                            imgW={imgSize.w}
+                            imgH={imgSize.h}
+                            selectedId={selectedId}
+                            onSelect={setSelectedId}
+                            onCommit={commitAnnotation}
+                            onChangeLive={changeLive}
+                            onMoveCommit={commitGesture}
+                          />
+                        </div>
+                      )}
                       <figcaption className="sr-only">
                         Captured {capture.mode} of screen {capture.screenIndex}
                       </figcaption>
