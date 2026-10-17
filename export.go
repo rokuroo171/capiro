@@ -30,20 +30,28 @@ var frameColor = map[string]color.RGBA{
 // frameRequest is the polish state handed over at export time. Export composes
 // capture plus polish here so the frontend never has to rasterize anything.
 type frameRequest struct {
-	ImageB64   string `json:"imageB64"`
-	Background string `json:"background"`
-	Padding    int    `json:"padding"`
-	Radius     int    `json:"radius"`
-	Format     string `json:"format"`
-	Quality    int    `json:"quality"`
-	Scale      int    `json:"scale"`
-	FileName   string `json:"fileName"`
+	ImageB64   string       `json:"imageB64"`
+	Background string       `json:"background"`
+	Padding    int          `json:"padding"`
+	Radius     int          `json:"radius"`
+	Format     string       `json:"format"`
+	Quality    int          `json:"quality"`
+	Scale      int          `json:"scale"`
+	FileName   string       `json:"fileName"`
+	Annotate   []Annotation `json:"annotate"`
 }
+
+const (
+	hugShadowOffsetY = 28
+	hugShadowBlur    = 48
+	hugShadowAlpha   = 0.48
+)
 
 // frameImage centers the shot on a background with padding, rounds the shot
 // corners by radius, and scales the whole composition by scale. Padding and
 // radius are in capture pixels and scale with the output, matching the canvas
-// preview which shows the same proportions
+// preview which shows the same proportions. Hug shadow is baked in so Save
+// matches the Stage preview.
 func frameImage(img image.Image, background color.RGBA, padding, radius, scale int) (*image.RGBA, error) {
 	if scale < 1 || scale > 3 {
 		return nil, fmt.Errorf("unsupported export scale %d", scale)
@@ -63,13 +71,115 @@ func frameImage(img image.Image, background color.RGBA, padding, radius, scale i
 		xdraw.CatmullRom.Scale(scaled, scaled.Bounds(), img, img.Bounds(), xdraw.Src, nil)
 		shot = scaled
 	}
-	if radius > 0 {
-		mask := roundedMask(shotW, shotH, radius*scale)
-		draw.DrawMask(out, image.Rect(pad, pad, pad+shotW, pad+shotH), shot, image.Point{}, mask, image.Point{}, draw.Over)
+	rad := radius * scale
+	var mask *image.Alpha
+	if rad > 0 {
+		mask = roundedMask(shotW, shotH, rad)
 	} else {
-		draw.Draw(out, image.Rect(pad, pad, pad+shotW, pad+shotH), shot, image.Point{}, draw.Src)
+		mask = opaqueRect(shotW, shotH)
 	}
+	drawHugShadow(out, mask, pad, pad, scale)
+	draw.DrawMask(out, image.Rect(pad, pad, pad+shotW, pad+shotH), shot, image.Point{}, mask, image.Point{}, draw.Over)
 	return out, nil
+}
+
+func opaqueRect(w, h int) *image.Alpha {
+	m := image.NewAlpha(image.Rect(0, 0, w, h))
+	for i := range m.Pix {
+		m.Pix[i] = 0xFF
+	}
+	return m
+}
+
+func drawHugShadow(dst *image.RGBA, mask *image.Alpha, x, y, scale int) {
+	offsetY := hugShadowOffsetY * scale
+	radius := hugShadowBlur * scale
+	mb := mask.Bounds()
+	mw, mh := mb.Dx(), mb.Dy()
+	fieldW := dst.Bounds().Dx()
+	fieldH := dst.Bounds().Dy()
+	field := make([]uint8, fieldW*fieldH)
+	for my := 0; my < mh; my++ {
+		dy := y + my + offsetY
+		if dy < 0 || dy >= fieldH {
+			continue
+		}
+		for mx := 0; mx < mw; mx++ {
+			dx := x + mx
+			if dx < 0 || dx >= fieldW {
+				continue
+			}
+			field[dy*fieldW+dx] = mask.AlphaAt(mb.Min.X+mx, mb.Min.Y+my).A
+		}
+	}
+	if radius > 0 {
+		field = boxBlurGray(field, fieldW, fieldH, radius)
+	}
+	for py := 0; py < fieldH; py++ {
+		row := py * fieldW
+		for px := 0; px < fieldW; px++ {
+			a := field[row+px]
+			if a == 0 {
+				continue
+			}
+			cover := float64(a) / 255 * hugShadowAlpha
+			blendPixel(dst, px, py, color.RGBA{A: 0xFF}, cover)
+		}
+	}
+}
+
+func boxBlurGray(src []uint8, w, h, radius int) []uint8 {
+	if radius < 1 || w < 1 || h < 1 {
+		return src
+	}
+	tmp := make([]uint8, len(src))
+	dst := make([]uint8, len(src))
+	copy(dst, src)
+	for pass := 0; pass < 2; pass++ {
+		blurAxis(dst, tmp, w, h, radius, true)
+		blurAxis(tmp, dst, w, h, radius, false)
+	}
+	return dst
+}
+
+func blurAxis(src, dst []uint8, w, h, radius int, horizontal bool) {
+	span := radius*2 + 1
+	if horizontal {
+		for y := 0; y < h; y++ {
+			row := y * w
+			sum := 0
+			for i := -radius; i <= radius; i++ {
+				sum += int(src[row+clampIndex(i, w)])
+			}
+			for x := 0; x < w; x++ {
+				dst[row+x] = uint8((sum + span/2) / span)
+				sum += int(src[row+clampIndex(x+radius+1, w)])
+				sum -= int(src[row+clampIndex(x-radius, w)])
+			}
+		}
+		return
+	}
+	for x := 0; x < w; x++ {
+		sum := 0
+		for i := -radius; i <= radius; i++ {
+			sum += int(src[clampIndex(i, h)*w+x])
+		}
+		for y := 0; y < h; y++ {
+			dst[y*w+x] = uint8((sum + span/2) / span)
+			sum += int(src[clampIndex(y+radius+1, h)*w+x])
+			sum -= int(src[clampIndex(y-radius, h)*w+x])
+		}
+	}
+}
+
+func clampIndex(v, max int) int {
+	if v < 0 {
+		return 0
+	}
+	if v >= max {
+		return max - 1
+	}
+	return v
 }
 
 // roundedMask returns an alpha mask covering the full rect: opaque except where
@@ -115,7 +225,9 @@ func cornerCenter(x, y, w, h, radius int) (int, int) {
 	default:
 		return w - radius, h - radius
 	}
-} // ExportService handles saving the composed shot. Kept separate from
+}
+
+// ExportService handles saving the composed shot. Kept separate from
 // CaptureService: export is a different pipeline stage with different state.
 type ExportService struct {
 	app *application.App
@@ -125,23 +237,37 @@ func (s *ExportService) attach(app *application.App) {
 	s.app = app
 }
 
-// ExportComposed opens a native save dialog, composes the polished image, and
-// writes it. Returns the saved path, or an empty string when the user cancelled.
-func (s *ExportService) ExportComposed(req frameRequest) (string, error) {
+func composeRequest(req frameRequest) (*image.RGBA, error) {
 	if req.ImageB64 == "" {
-		return "", errors.New("no capture to export")
+		return nil, errors.New("no capture to export")
 	}
 	raw, err := base64.StdEncoding.DecodeString(req.ImageB64)
 	if err != nil {
-		return "", fmt.Errorf("decode capture: %w", err)
+		return nil, fmt.Errorf("decode capture: %w", err)
 	}
 	img, err := png.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return "", fmt.Errorf("decode capture: %w", err)
+		return nil, fmt.Errorf("decode capture: %w", err)
+	}
+	if len(req.Annotate) > 0 {
+		img, err = annotateImage(img, req.Annotate)
+		if err != nil {
+			return nil, err
+		}
 	}
 	bg, ok := frameColor[req.Background]
 	if !ok {
-		return "", fmt.Errorf("unknown background %q", req.Background)
+		return nil, fmt.Errorf("unknown background %q", req.Background)
+	}
+	return frameImage(img, bg, req.Padding, req.Radius, req.Scale)
+}
+
+// ExportComposed opens a native save dialog, composes the polished image, and
+// writes it. Returns the saved path, or an empty string when the user cancelled.
+func (s *ExportService) ExportComposed(req frameRequest) (string, error) {
+	composed, err := composeRequest(req)
+	if err != nil {
+		return "", err
 	}
 	format := strings.ToUpper(req.Format)
 	if format == "" {
@@ -152,11 +278,6 @@ func (s *ExportService) ExportComposed(req frameRequest) (string, error) {
 	}
 	if format != "PNG" && format != "JPEG" {
 		return "", fmt.Errorf("unknown format %q", req.Format)
-	}
-
-	composed, err := frameImage(img, bg, req.Padding, req.Radius, req.Scale)
-	if err != nil {
-		return "", err
 	}
 
 	ext := "png"
@@ -191,6 +312,19 @@ func (s *ExportService) ExportComposed(req frameRequest) (string, error) {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 	return path, nil
+}
+
+// CopyComposed composes the same PNG as Save and puts it on the system clipboard.
+func (s *ExportService) CopyComposed(req frameRequest) error {
+	composed, err := composeRequest(req)
+	if err != nil {
+		return err
+	}
+	var data bytes.Buffer
+	if err := png.Encode(&data, composed); err != nil {
+		return fmt.Errorf("encode png: %w", err)
+	}
+	return copyImageToClipboard(composed, data.Bytes())
 }
 
 func clampQuality(q int) int {

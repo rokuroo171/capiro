@@ -71,6 +71,42 @@ func TestClampQuality(t *testing.T) {
 	}
 }
 
+func TestFrameImageHugShadow(t *testing.T) {
+	shot := image.NewRGBA(image.Rect(0, 0, 40, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 40; x++ {
+			shot.Set(x, y, color.RGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+		}
+	}
+	bg := color.RGBA{R: 0x14, G: 0x15, B: 0x1B, A: 0xFF}
+	out, err := frameImage(shot, bg, 48, 16, 1)
+	if err != nil {
+		t.Fatalf("frameImage: %v", err)
+	}
+	pad := 48
+	top := color.RGBAModel.Convert(out.At(pad+20, 8)).(color.RGBA)
+	if top != bg {
+		t.Fatalf("top padding should stay background, got %+v", top)
+	}
+	below := color.RGBAModel.Convert(out.At(pad+20, pad+24+12)).(color.RGBA)
+	if below.R >= bg.R && below.G >= bg.G && below.B >= bg.B {
+		t.Fatalf("pixels under the shot should pick up hug shadow, got %+v", below)
+	}
+}
+
+func TestComposeRequestRejectsHexBackground(t *testing.T) {
+	_, err := composeRequest(frameRequest{
+		ImageB64:   "not-png",
+		Background: "#14151B",
+		Padding:    48,
+		Radius:     16,
+		Scale:      1,
+	})
+	if err == nil {
+		t.Fatal("hex background should be rejected")
+	}
+}
+
 func TestDefaultFileName(t *testing.T) {
 	if got := defaultFileName("capiro-region-800x600.png", "JPEG", "jpg"); got != "capiro-region-800x600.jpg" {
 		t.Fatalf("unexpected name: %q", got)

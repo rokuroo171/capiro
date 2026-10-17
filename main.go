@@ -32,14 +32,14 @@ func main() {
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "Capiro",
 		// Window sized to the golden ratio (1000 / 618 ≈ 1.618).
-		Width:  1000,
-		Height: 618,
+		Width:  1280,
+		Height: 800,
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		BackgroundColour: application.NewRGB(6, 7, 15),
+		BackgroundColour: application.NewRGB(11, 12, 16),
 		URL:              "/",
 	})
 
