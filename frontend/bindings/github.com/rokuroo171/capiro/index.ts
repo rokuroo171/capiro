@@ -9,7 +9,11 @@ export {
 };
 
 export type {
+    Annotation,
+    AnnotationGeometry,
+    AnnotationStyle,
     CaptureResult,
+    Point,
     ScreenInfo,
     WindowInfo
 } from "./models.js";
