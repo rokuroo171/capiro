@@ -231,6 +231,29 @@ func encodePNG(img image.Image) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// isBlackImage samples a coarse grid, which is enough to spot the fully black
+// frames PrintWindow produces for hardware accelerated windows.
+func isBlackImage(img *image.RGBA) bool {
+	if img == nil {
+		return true
+	}
+	b := img.Bounds()
+	if b.Empty() {
+		return true
+	}
+	stepX := max(1, b.Dx()/64)
+	stepY := max(1, b.Dy()/64)
+	for y := b.Min.Y; y < b.Max.Y; y += stepY {
+		for x := b.Min.X; x < b.Max.X; x += stepX {
+			i := img.PixOffset(x, y)
+			if img.Pix[i]|img.Pix[i+1]|img.Pix[i+2] != 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func buildResult(img image.Image, mode string, screenIndex int, scale float64) (CaptureResult, error) {
 	data, err := encodePNG(img)
 	if err != nil {
